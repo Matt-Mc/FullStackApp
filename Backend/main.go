@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"sync"
+	"database/sql"
+	_ "github.com/lib/pq"
 )
 
 type BillName struct {
@@ -72,12 +74,16 @@ func getBills() error {
 	}
 
 	fmt.Printf("successfully got %d bills\n", len(billResponse.Objects))
-	for i, bill := range billResponse.Objects {
-		fmt.Printf("Bill %d: %s\n", i, bill.Number)
-		fmt.Printf("Bill %d: %s\n", i, bill.Name.EN)
-		fmt.Printf("Bill %d: %s\n", i, bill.Name.FR)
-		fmt.Printf("Bill %d: %s\n", i, bill.Introduced)
-		fmt.Printf("Bill %d: %s\n", i, bill.Url)
+	for _, bill := range billResponse.Objects {
+		db, err := connectToDatabase()
+		if err != nil {
+			fmt.Printf("Error connecting to database: %v\n", err)
+		}
+		_, err = db.Exec("INSERT INTO bills (Session, Legisinfo_id, Introduced, Name, Number, Url) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (legisinfo_id) DO UPDATE SET session = EXCLUDED.session,introduced = EXCLUDED.introduced,name = EXCLUDED.name,number = EXCLUDED.number,url = EXCLUDED.url ", bill.Session, bill.Legisinfo_id, bill.Introduced, bill.Name.EN, bill.Number, bill.Url)
+		if err != nil {
+			fmt.Printf("Error inserting bill into database: %v\n", err)
+			fmt.Printf("Bill: %v\n", bill)
+		}
 	}
 
 	return nil
@@ -103,15 +109,22 @@ func getMPs() error {
 		return nil
 	}
 	fmt.Printf("successfully got %d MPs\n", len(mps.Objects))
-	for i, mp := range mps.Objects {
-		fmt.Printf("MP %d: %s\n", i, mp.Name)
-		fmt.Printf("MP %d: %s\n", i, mp.CurrentParty.ShortName.EN)
-		fmt.Printf("MP %d: %s\n", i, mp.CurrentRiding.Name.EN)
-		fmt.Printf("MP %d: %s\n", i, mp.CurrentRiding.Province)
-		fmt.Printf("MP %d: %s\n", i, mp.Image)
+	for _, mp := range mps.Objects {
+		db, err := connectToDatabase()
+		if err != nil {
+			fmt.Printf("Error connecting to database: %v\n", err)
+		}
+
+		_, err = db.Exec("INSERT INTO mps (Name, CurrentParty, CurrentRiding, Url, Image) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (name) DO UPDATE SET currentparty = EXCLUDED.CurrentParty, currentriding = EXCLUDED.CurrentRiding, url = EXCLUDED.URL, image = EXCLUDED.Image",mp.Name, mp.CurrentParty.ShortName.EN, mp.CurrentRiding.Name.EN,mp.URL, mp.Image)
+		if err != nil {
+			fmt.Printf("Error inserting MP into database: %v\n", err)
+			fmt.Printf("MP: %v\n", mp)
+		}
 	}
 	return nil
 }
+
+
 
 func getData(wg *sync.WaitGroup) {
 	defer wg.Done()
@@ -132,7 +145,21 @@ func getData(wg *sync.WaitGroup) {
 		}
 	}()
 
+	defer db.Close()
+
 }
+
+
+func connectToDatabase() (*sql.DB, error) {
+	connStr := "postgresql://neondb_owner:npg_GZLK3mDq5fbC@ep-white-voice-a8ddy7wk-pooler.eastus2.azure.neon.tech/neondb?sslmode=require"
+    db, err := sql.Open("postgres", connStr)
+    if err != nil {
+        panic(err)
+    }
+	return db, nil
+}
+
+
 
 func main() { // This is the main function, the entry point of your program.
 	fmt.Println("Starting Go Routines")
@@ -141,6 +168,7 @@ func main() { // This is the main function, the entry point of your program.
 
 	wg.Add(1)
 	go getData(&wg)
+	
 
 	wg.Wait()
 	fmt.Println("All Go Routines completed")
