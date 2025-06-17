@@ -4,9 +4,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
+	"time"
 	"net/http"
 	"sync"
+	"database/sql"
+	_ "github.com/lib/pq"
+	"os"
+	_ "github.com/joho/godotenv/autoload"
 )
+
+// Global database connection pool
+var appDB *sql.DB
 
 type BillName struct {
 	EN string `json:"en"`
@@ -51,7 +60,7 @@ type Party struct {
 	} `json:"short_name"`
 }
 
-func getBills() error {
+func getBills(database *sql.DB) error {	
 	resp, err := http.Get("https://api.openparliament.ca/bills/?format=json")
 	if err != nil {
 		return fmt.Errorf("failed to make HTTP request for Bills: %w", err)
@@ -70,20 +79,28 @@ func getBills() error {
 		fmt.Println("No bills found in response.")
 		return nil
 	}
-
+	
 	fmt.Printf("successfully got %d bills\n", len(billResponse.Objects))
-	for i, bill := range billResponse.Objects {
-		fmt.Printf("Bill %d: %s\n", i, bill.Number)
-		fmt.Printf("Bill %d: %s\n", i, bill.Name.EN)
-		fmt.Printf("Bill %d: %s\n", i, bill.Name.FR)
-		fmt.Printf("Bill %d: %s\n", i, bill.Introduced)
-		fmt.Printf("Bill %d: %s\n", i, bill.Url)
+	for _, bill := range billResponse.Objects {
+		_, err = database.Exec(`
+		INSERT INTO bills (Session, Legisinfo_id, Introduced, Name, Number, Url) 
+		VALUES ($1, $2, $3, $4, $5, $6) 
+		ON CONFLICT (Legisinfo_id) DO UPDATE SET  
+		session = EXCLUDED.session, 
+		introduced = EXCLUDED.introduced, 
+		name = EXCLUDED.name, 
+		number = EXCLUDED.number, 
+		url = EXCLUDED.url `, 
+		bill.Session, bill.Legisinfo_id, bill.Introduced, bill.Name.EN, bill.Number, bill.Url)
+		if err != nil {
+			fmt.Printf("Error inserting bill into database: %v\n", err)
+			fmt.Printf("Bill: %v\n", bill)
+		}
 	}
-
 	return nil
 }
 
-func getMPs() error {
+func getMPs(database *sql.DB) error {
 	resp, err := http.Get("https://api.openparliament.ca/politicians/?format=json")
 	if err != nil {
 		return fmt.Errorf("failed to make HTTP request for MPs: %w", err)
@@ -102,46 +119,108 @@ func getMPs() error {
 		fmt.Println("No MPs found in response.")
 		return nil
 	}
+
+
 	fmt.Printf("successfully got %d MPs\n", len(mps.Objects))
-	for i, mp := range mps.Objects {
-		fmt.Printf("MP %d: %s\n", i, mp.Name)
-		fmt.Printf("MP %d: %s\n", i, mp.CurrentParty.ShortName.EN)
-		fmt.Printf("MP %d: %s\n", i, mp.CurrentRiding.Name.EN)
-		fmt.Printf("MP %d: %s\n", i, mp.CurrentRiding.Province)
-		fmt.Printf("MP %d: %s\n", i, mp.Image)
+	for _, mp := range mps.Objects {
+		_, err = database.Exec(`
+		INSERT INTO mps (Name, CurrentParty, CurrentRiding, Url, Image) 
+		VALUES ($1, $2, $3, $4, $5) 
+		ON CONFLICT (Name) DO UPDATE SET  
+		CurrentParty = EXCLUDED.CurrentParty, 
+		CurrentRiding = EXCLUDED.CurrentRiding, 
+		Url = EXCLUDED.Url, 
+		image = EXCLUDED.Image`, 
+		mp.Name, mp.CurrentParty.ShortName.EN, mp.CurrentRiding.Name.EN, mp.URL, mp.Image)
+		if err != nil {
+			fmt.Printf("Error inserting MP into database: %v\n", err)
+			fmt.Printf("MP: %v\n", mp)
+		}
 	}
 	return nil
 }
 
-func getData(wg *sync.WaitGroup) {
+
+
+func getData(wg *sync.WaitGroup, database *sql.DB) {
 	defer wg.Done()
 
-	wg.Add(1)
+	var internalWg sync.WaitGroup
+
+	internalWg.Add(1)
 	go func() {
-		defer wg.Done()
-		if err := getBills(); err != nil {
-			fmt.Printf("Error getting bills: %v\n", err)
+		defer internalWg.Done()
+		if err := getBills(database); err != nil { // Pass 'database' here
+			log.Printf("Error getting bills: %v\n", err)
 		}
 	}()
 
-	wg.Add(1)
+	internalWg.Add(1)
 	go func() {
-		defer wg.Done()
-		if err := getMPs(); err != nil {
-			fmt.Printf("Error getting MPs: %v\n", err)
+		defer internalWg.Done()
+		if err := getMPs(database); err != nil { // Pass 'database' here
+			log.Printf("Error getting MPs: %v\n", err)
 		}
 	}()
+
+	internalWg.Wait()
 
 }
 
-func main() { // This is the main function, the entry point of your program.
-	fmt.Println("Starting Go Routines")
+
+func initDatabase() error {
+	connStr := os.Getenv("DBcon")
+	if connStr == "" {
+		log.Println("DBcon environment variable not set. Please set it or hardcode for testing.")
+		return fmt.Errorf("DBcon environment variable not set")
+	}
+
+	var err error
+	appDB, err = sql.Open("postgres", connStr)
+	if err != nil {
+		return fmt.Errorf("error opening database connection: %w", err)
+	}
+
+	err = appDB.Ping()
+	if err != nil {
+		appDB.Close()
+		return fmt.Errorf("error connecting to the database: %w", err)
+	}
+
+	appDB.SetMaxOpenConns(25)
+	appDB.SetMaxIdleConns(25)
+	appDB.SetConnMaxLifetime(5 * time.Minute)
+	appDB.SetConnMaxIdleTime(1 * time.Minute)
+
+	log.Println("Successfully connected to PostgreSQL!")
+	return nil
+}
+
+
+
+func main() { 
+	// Initialize database connection pool once
+	if err := initDatabase(); err != nil {
+		log.Fatalf("Failed to initialize database: %v", err)
+	}
+	// Ensure the database connection is closed when main exits
+	defer func() {
+		if appDB != nil {
+			err := appDB.Close()
+			if err != nil {
+				log.Printf("Error closing database connection: %v\n", err)
+			}
+			log.Println("Database connection pool closed.")
+		}
+	}()
+
+	log.Println("Starting data pulling routines...")
 
 	var wg sync.WaitGroup
 
 	wg.Add(1)
-	go getData(&wg)
+	go getData(&wg, appDB) // Pass the global 'db' instance here
 
 	wg.Wait()
-	fmt.Println("All Go Routines completed")
+	log.Println("All data pulling routines completed.")
 }
