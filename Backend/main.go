@@ -14,6 +14,9 @@ import (
 	_ "github.com/joho/godotenv/autoload"
 )
 
+// Global database connection pool
+var appDB *sql.DB
+
 type BillName struct {
 	EN string `json:"en"`
 	FR string `json:"fr"`
@@ -79,7 +82,16 @@ func getBills(database *sql.DB) error {
 	
 	fmt.Printf("successfully got %d bills\n", len(billResponse.Objects))
 	for _, bill := range billResponse.Objects {
-		_, err = database.Exec("INSERT INTO bills (Session, Legisinfo_id, Introduced, Name, Number, Url) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (Legisinfo_id) DO UPDATE SET legisinfo_id = EXCLUDED.legisinfo_id, session = EXCLUDED.session, introduced = EXCLUDED.introduced, name = EXCLUDED.name, number = EXCLUDED.number, url = EXCLUDED.url ", bill.Session, bill.Legisinfo_id, bill.Introduced, bill.Name.EN, bill.Number, bill.Url)
+		_, err = database.Exec(`
+		INSERT INTO bills (Session, Legisinfo_id, Introduced, Name, Number, Url) 
+		VALUES ($1, $2, $3, $4, $5, $6) 
+		ON CONFLICT (Legisinfo_id) DO UPDATE SET  
+		session = EXCLUDED.session, 
+		introduced = EXCLUDED.introduced, 
+		name = EXCLUDED.name, 
+		number = EXCLUDED.number, 
+		url = EXCLUDED.url `, 
+		bill.Session, bill.Legisinfo_id, bill.Introduced, bill.Name.EN, bill.Number, bill.Url)
 		if err != nil {
 			fmt.Printf("Error inserting bill into database: %v\n", err)
 			fmt.Printf("Bill: %v\n", bill)
@@ -111,7 +123,15 @@ func getMPs(database *sql.DB) error {
 
 	fmt.Printf("successfully got %d MPs\n", len(mps.Objects))
 	for _, mp := range mps.Objects {
-		_, err = database.Exec("INSERT INTO mps (Name, CurrentParty, CurrentRiding, Url, Image) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (Name) DO UPDATE SET Name = EXCLUDED.Name, CurrentParty = EXCLUDED.CurrentParty, CurrentRiding = EXCLUDED.CurrentRiding, Url = EXCLUDED.Url, image = EXCLUDED.Image", mp.Name, mp.CurrentParty.ShortName.EN, mp.CurrentRiding.Name.EN, mp.URL, mp.Image)
+		_, err = database.Exec(`
+		INSERT INTO mps (Name, CurrentParty, CurrentRiding, Url, Image) 
+		VALUES ($1, $2, $3, $4, $5) 
+		ON CONFLICT (Name) DO UPDATE SET  
+		CurrentParty = EXCLUDED.CurrentParty, 
+		CurrentRiding = EXCLUDED.CurrentRiding, 
+		Url = EXCLUDED.Url, 
+		image = EXCLUDED.Image`, 
+		mp.Name, mp.CurrentParty.ShortName.EN, mp.CurrentRiding.Name.EN, mp.URL, mp.Image)
 		if err != nil {
 			fmt.Printf("Error inserting MP into database: %v\n", err)
 			fmt.Printf("MP: %v\n", mp)
@@ -156,21 +176,21 @@ func initDatabase() error {
 	}
 
 	var err error
-	db, err = sql.Open("postgres", connStr)
+	appDB, err = sql.Open("postgres", connStr)
 	if err != nil {
 		return fmt.Errorf("error opening database connection: %w", err)
 	}
 
-	err = db.Ping()
+	err = appDB.Ping()
 	if err != nil {
-		db.Close()
+		appDB.Close()
 		return fmt.Errorf("error connecting to the database: %w", err)
 	}
 
-	db.SetMaxOpenConns(25)
-	db.SetMaxIdleConns(25)
-	db.SetConnMaxLifetime(5 * time.Minute)
-	db.SetConnMaxIdleTime(1 * time.Minute)
+	appDB.SetMaxOpenConns(25)
+	appDB.SetMaxIdleConns(25)
+	appDB.SetConnMaxLifetime(5 * time.Minute)
+	appDB.SetConnMaxIdleTime(1 * time.Minute)
 
 	log.Println("Successfully connected to PostgreSQL!")
 	return nil
@@ -185,8 +205,8 @@ func main() {
 	}
 	// Ensure the database connection is closed when main exits
 	defer func() {
-		if db != nil {
-			err := db.Close()
+		if appDB != nil {
+			err := appDB.Close()
 			if err != nil {
 				log.Printf("Error closing database connection: %v\n", err)
 			}
@@ -199,7 +219,7 @@ func main() {
 	var wg sync.WaitGroup
 
 	wg.Add(1)
-	go getData(&wg, db) // Pass the global 'db' instance here
+	go getData(&wg, appDB) // Pass the global 'db' instance here
 
 	wg.Wait()
 	log.Println("All data pulling routines completed.")
