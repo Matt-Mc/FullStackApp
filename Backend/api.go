@@ -1,7 +1,9 @@
 package main
 
 import (
+	"database/sql"
 	"net/http"
+	"net/url"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -36,15 +38,60 @@ func RunAPI() {
 	})
 
 	router.GET("/api/bills/:id", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"message": "Hello, World!"})
+		id := c.Param("id")
+		var bill Bill
+		row := appDB.QueryRow("SELECT * FROM bills WHERE Legisinfo_id = $1", id)
+		err := row.Scan(&bill.Name.EN, &bill.Session, &bill.Introduced, &bill.Legisinfo_id, &bill.Number, &bill.Url)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Bill not found"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"bill": bill})
 	})
 
 	router.GET("/api/mps", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"message": "Hello, World!"})
+		var mps []MP
+		rows, err := appDB.Query("SELECT * FROM mps")
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		for rows.Next() {
+			var mp MP
+			err = rows.Scan(&mp.Name, &mp.CurrentParty.ShortName.EN, &mp.CurrentRiding.Name.EN, &mp.URL, &mp.Image, &mp.CurrentRiding.Province)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			defer rows.Close()
+			mps = append(mps, mp)
+		}
+		if err := rows.Err(); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"MPs": mps})
 	})
 
 	router.GET("/api/mps/:name", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"message": "Hello, World!"})
+		name := c.Param("name")
+		name, _ = url.PathUnescape(name)
+		var mp MP
+		row := appDB.QueryRow("SELECT * FROM mps WHERE name = $1", name)
+		err := row.Scan(&mp.Name, &mp.CurrentParty.ShortName.EN, &mp.CurrentRiding.Name.EN, &mp.URL, &mp.Image, &mp.CurrentRiding.Province)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Bill not found"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"MP": mp})
 	})
 
 	router.Run(":1500")

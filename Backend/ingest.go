@@ -1,7 +1,6 @@
 package main
 
 import (
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -56,11 +55,10 @@ type Party struct {
 	} `json:"short_name"`
 }
 
-func getBills(database *sql.DB) error {
+func getBills() error {
 	resp, err := http.Get("https://api.openparliament.ca/bills/?format=json")
 	if err != nil {
 		return fmt.Errorf("failed to make HTTP request for Bills: %w", err)
-		print(err)
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
@@ -78,7 +76,7 @@ func getBills(database *sql.DB) error {
 
 	fmt.Printf("successfully got %d bills\n", len(billResponse.Objects))
 	for _, bill := range billResponse.Objects {
-		_, err = database.Exec(`
+		_, err = appDB.Exec(`
 		INSERT INTO bills (Session, Legisinfo_id, Introduced, Name, Number, Url) 
 		VALUES ($1, $2, $3, $4, $5, $6) 
 		ON CONFLICT (Legisinfo_id) DO UPDATE SET  
@@ -96,7 +94,7 @@ func getBills(database *sql.DB) error {
 	return nil
 }
 
-func getMPs(database *sql.DB) error {
+func getMPs() error {
 	resp, err := http.Get("https://api.openparliament.ca/politicians/?format=json")
 	if err != nil {
 		return fmt.Errorf("failed to make HTTP request for MPs: %w", err)
@@ -118,15 +116,16 @@ func getMPs(database *sql.DB) error {
 
 	fmt.Printf("successfully got %d MPs\n", len(mps.Objects))
 	for _, mp := range mps.Objects {
-		_, err = database.Exec(`
-		INSERT INTO mps (Name, CurrentParty, CurrentRiding, Url, Image) 
-		VALUES ($1, $2, $3, $4, $5) 
+		_, err = appDB.Exec(`
+		INSERT INTO mps (Name, CurrentParty, CurrentRiding, Url, Image, province) 
+		VALUES ($1, $2, $3, $4, $5, $6) 
 		ON CONFLICT (Name) DO UPDATE SET  
 		CurrentParty = EXCLUDED.CurrentParty, 
 		CurrentRiding = EXCLUDED.CurrentRiding, 
 		Url = EXCLUDED.Url, 
-		image = EXCLUDED.Image`,
-			mp.Name, mp.CurrentParty.ShortName.EN, mp.CurrentRiding.Name.EN, mp.URL, mp.Image)
+		image = EXCLUDED.Image,
+		province = EXCLUDED.province`,
+			mp.Name, mp.CurrentParty.ShortName.EN, mp.CurrentRiding.Name.EN, mp.URL, mp.Image, mp.CurrentRiding.Province)
 		if err != nil {
 			fmt.Printf("Error inserting MP into database: %v\n", err)
 			fmt.Printf("MP: %v\n", mp)
@@ -135,7 +134,7 @@ func getMPs(database *sql.DB) error {
 	return nil
 }
 
-func getData(wg *sync.WaitGroup, database *sql.DB) {
+func getData(wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	var internalWg sync.WaitGroup
@@ -143,7 +142,7 @@ func getData(wg *sync.WaitGroup, database *sql.DB) {
 	internalWg.Add(1)
 	go func() {
 		defer internalWg.Done()
-		if err := getBills(database); err != nil { // Pass 'database' here
+		if err := getBills(); err != nil {
 			log.Printf("Error getting bills: %v\n", err)
 		}
 	}()
@@ -151,7 +150,7 @@ func getData(wg *sync.WaitGroup, database *sql.DB) {
 	internalWg.Add(1)
 	go func() {
 		defer internalWg.Done()
-		if err := getMPs(database); err != nil { // Pass 'database' here
+		if err := getMPs(); err != nil {
 			log.Printf("Error getting MPs: %v\n", err)
 		}
 	}()
@@ -166,7 +165,7 @@ func RunIngest() {
 	var wg sync.WaitGroup
 
 	wg.Add(1)
-	go getData(&wg, appDB) // Pass the global 'db' instance here
+	go getData(&wg)
 
 	wg.Wait()
 	log.Println("All data pulling routines completed.")
