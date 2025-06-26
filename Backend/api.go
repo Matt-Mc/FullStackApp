@@ -15,19 +15,20 @@ func RunAPI() {
 
 	router.GET("/api/bills", func(c *gin.Context) {
 		var bills []Bill
-		rows, err := appDB.Query("SELECT * FROM bills")
+		rows, err := appDB.Query("SELECT Session, Legisinfo_id, Introduced, Name, Number, Url FROM bills")
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
 		for rows.Next() {
 			var bill Bill
-			err = rows.Scan(&bill.Name.EN, &bill.Session, &bill.Introduced, &bill.Legisinfo_id, &bill.Number, &bill.Url)
+			var nameEN string // Temporary variable for the English name
+			err = rows.Scan(&bill.Session, &bill.Legisinfo_id, &bill.Introduced, &nameEN, &bill.Number, &bill.Url)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
 			}
-			defer rows.Close()
+			bill.Name.EN = nameEN // Assign the scanned string to the EN field
 			bills = append(bills, bill)
 		}
 		if err := rows.Err(); err != nil {
@@ -40,16 +41,18 @@ func RunAPI() {
 	router.GET("/api/bills/:id", func(c *gin.Context) {
 		id := c.Param("id")
 		var bill Bill
-		row := appDB.QueryRow("SELECT * FROM bills WHERE Legisinfo_id = $1", id)
-		err := row.Scan(&bill.Name.EN, &bill.Session, &bill.Introduced, &bill.Legisinfo_id, &bill.Number, &bill.Url)
+		var nameEN string // Temporary variable for the English name
+		row := appDB.QueryRow("SELECT Session, Legisinfo_id, Introduced, Name, Number, Url FROM bills WHERE Legisinfo_id = $1", id)
+		err := row.Scan(&bill.Session, &bill.Legisinfo_id, &bill.Introduced, &nameEN, &bill.Number, &bill.Url)
 		if err != nil {
+			if err == sql.ErrNoRows {
+				c.JSON(http.StatusNotFound, gin.H{"error": "Bill not found"})
+				return
+			}
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
-		if err == sql.ErrNoRows {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Bill not found"})
-			return
-		}
+		bill.Name.EN = nameEN // Assign the scanned string to the EN field
 		c.JSON(http.StatusOK, gin.H{"bill": bill})
 	})
 

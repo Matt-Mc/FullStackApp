@@ -28,25 +28,27 @@ This project is a full-stack application that fetches data from the Open Parliam
    cd Frontend
    ```
 
-2. Install dependencies (if any):
+2. Install dependencies:
    ```bash
    npm install
    ```
 
-3. Start the frontend server:
+3. Start the frontend development server:
    ```bash
-   npm start
+   npm run dev
    ```
 
 ## Features
 
-- Fetches bills and MPs data from the Open Parliament API.
-- Displays the data in a web interface.
+- Fetches and displays Canadian parliamentary bills.
+- Fetches and displays information about Members of Parliament (MPs).
+- Displays a total tally of MPs by party.
+- Visualizes MP distribution by party using a pie chart with party-specific colors.
 
 ## Technologies Used
 
 - **Backend**: Go
-- **Frontend**: (Specify the frontend technology, e.g., React, Angular, etc.)
+- **Frontend**: React with TypeScript
 
 ## License
 
