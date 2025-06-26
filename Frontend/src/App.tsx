@@ -1,47 +1,44 @@
 import React, { useState, useEffect } from 'react';
 import './App.css';
+import { fetchBills, fetchMPs } from './api';
+import type {Bill, MP } from './types';
+import BillList from './BillList';
+import MPList from './MPList';
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 
-// --- Define TypeScript Interfaces (ONLY for the Bill structure) ---
-interface BillName {
-  EN: string;
-  FR: string;
-}
-
-interface Bill {
-  Session: string;
-  Legisinfo_id: number;
-  Introduced: string;
-  Name: BillName;
-  Number: string;
-  Url: string;
-}
-// --- End of Interfaces ---
-
+const PARTY_COLORS: Record<string, string> = {
+  "Liberal": "#D71A4F",
+  "Conservative": "#1A4782",
+  "NDP": "#FF6600",
+  "Bloc Québécois": "#008080",
+  "Green Party": "#008000",
+  "Independent": "#FFFFFF",
+  // Add more parties and colors as needed
+};
 
 function App() {
-  // State to store the bills data, explicitly typed as an array of Bill
   const [bills, setBills] = useState<Bill[]>([]);
-
-  // State to manage loading status
+  const [mps, setMPs] = useState<MP[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
-
-  // State to manage potential errors
   const [error, setError] = useState<Error | null>(null);
+  const [partyTally, setPartyTally] = useState<Record<string, number>>({});
 
-  // useEffect hook to fetch data when the component mounts
   useEffect(() => {
-    const fetchBills = async () => {
+    const fetchData = async () => {
       try {
-        const response = await fetch('http://localhost:1500/api/bills'); // Your Go backend endpoint
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        // --- CRITICAL CHANGE HERE: Assign directly to data ---
-        // Expecting the response to be a direct array of Bill objects
-        const data: Bill[] = await response.json(); // Type assertion is now correct
+        const [billsData, mpsData] = await Promise.all([
+          fetchBills(),
+          fetchMPs(),
+        ]);
+        setBills(billsData);
+        setMPs(mpsData);
 
-        setBills(data); // Set the directly received array to your state
-        // --- END CRITICAL CHANGE ---
+        const tally: Record<string, number> = {};
+        mpsData.forEach(mp => {
+          const partyName = mp.current_party.short_name.en;
+          tally[partyName] = (tally[partyName] || 0) + 1;
+        });
+        setPartyTally(tally);
 
       } catch (err) {
         if (err instanceof Error) {
@@ -54,34 +51,71 @@ function App() {
       }
     };
 
-    fetchBills();
+    fetchData();
   }, []);
 
   if (loading) {
-    return <div className="App">Loading bills...</div>;
+    return <div className="App">Loading...</div>;
   }
 
   if (error) {
     return (
       <div className="App">
         <h1>Error: {error.message}</h1>
-        <p>Could not load bills. Please ensure your Go backend is running on http://localhost:8080</p>
+        <p>Could not load data. Please ensure your Go backend is running on http://localhost:1500</p>
       </div>
     );
   }
 
+  const pieChartData = Object.entries(partyTally).map(([name, value]) => ({
+    name,
+    value,
+  }));
+
   return (
     <div className="App">
-      <h1>Canadian Bills</h1>
-      <div className="bills-list">
-        {bills.map((bill: Bill) => (
-          <div key={bill.Legisinfo_id} className="bill-item">
-            <h2>{bill.Number}: {bill.Name.EN}</h2>
-            <p>Session: {bill.Session}</p>
-            <p>Introduced: {new Date(bill.Introduced).toLocaleDateString()}</p>
-            <p><a href={bill.Url} target="_blank" rel="noopener noreferrer">View Bill (Legisinfo)</a></p>
-          </div>
-        ))}
+      <h1>Canadian Parliament Dashboard</h1>
+      <div className="party-tally-section">
+        <h2>Party Distribution</h2>
+        <div className="chart-container">
+          <ResponsiveContainer width="100%" height={300}>
+            <PieChart>
+              <Pie
+                data={pieChartData}
+                cx="50%"
+                cy="50%"
+                outerRadius={100}
+                fill="#8884d8"
+                dataKey="value"
+                label
+              >
+                {pieChartData.map((entry, index) => (
+                  <Cell key={`cell-${index}`} fill={PARTY_COLORS[entry.name] || "#CCCCCC"} />
+                ))}
+              </Pie>
+              <Tooltip />
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
+        <div className="tally-list">
+          <ul>
+            {Object.entries(partyTally).map(([party, count]) => (
+              <li key={party} style={{ color: PARTY_COLORS[party] || "#000000" }}>
+                {party}: {count} MPs
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+      <div className="data-container">
+        <div className="bills-container">
+          <h2>Bills</h2>
+          <BillList bills={bills} />
+        </div>
+        <div className="mps-container">
+          <h2>Members of Parliament</h2>
+          <MPList mps={mps} />
+        </div>
       </div>
     </div>
   );
